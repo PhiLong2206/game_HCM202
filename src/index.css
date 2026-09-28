@@ -1,4 +1,4 @@
-/* src/index.css - ĐẤU TRƯỜNG ĐẠI ĐOÀN KẾT (Modern Academic Game Show Theme) */
+/* src/index.css - ĐẤU TRƯỜNG ĐẠI ĐOÀN KẾT (Card Betting Game Theme) */
 :root {
   --bg-main: #07111F;
   --bg-secondary: #0B1728;
@@ -11,7 +11,7 @@
 
   --primary: #22D3EE;
   --primary-dark: #0891B2;
-  --primary-glow: rgba(34, 211, 238, 0.2);
+  --primary-glow: rgba(34, 211, 238, 0.25);
 
   --secondary: #3B82F6;
   --accent: #FBBF24;
@@ -25,7 +25,6 @@
   --danger: #EF4444;
 
   --font-main: 'Be Vietnam Pro', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'Be Vietnam Pro', Inter, monospace;
 }
 
 * {
@@ -55,7 +54,7 @@ html, body {
   height: 100%;
 }
 
-/* Subtle atmosphere overlay (opacity cực thấp) */
+/* Subtle atmosphere overlay */
 .subtle-grid-overlay {
   position: fixed;
   inset: 0;
@@ -99,7 +98,7 @@ html, body {
 }
 
 .btn-tactical:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: not-allowed;
   filter: grayscale(0.6);
 }
@@ -148,6 +147,63 @@ html, body {
   box-shadow: 0 6px 18px rgba(239, 68, 68, 0.3);
 }
 
+/* Success Green Button */
+.btn-success-soft {
+  background: #14532D;
+  border: 1px solid #16A34A;
+  color: #DCFCE7;
+  font-weight: 700;
+}
+
+.btn-success-soft:hover:not(:disabled) {
+  background: #166534;
+  border-color: var(--success);
+  box-shadow: 0 6px 18px rgba(34, 197, 94, 0.3);
+}
+
+/* 3D Card Gaming Elements */
+.card-perspective {
+  perspective: 1200px;
+}
+
+.card-3d-box {
+  background: linear-gradient(145deg, #132742 0%, #0c1829 100%);
+  border: 1.5px solid var(--border-light);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.card-3d-box:hover:not(.used) {
+  transform: translateY(-6px) scale(1.02);
+  border-color: var(--primary);
+  box-shadow: 0 14px 30px rgba(34, 211, 238, 0.25), 0 0 15px rgba(34, 211, 238, 0.2);
+}
+
+.card-3d-box.selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 25px rgba(34, 211, 238, 0.4);
+}
+
+.card-3d-box.used {
+  opacity: 0.35;
+  filter: grayscale(0.85);
+  cursor: not-allowed;
+  border-color: #1A2838;
+}
+
+/* Card Glyphs */
+.card-inner-pattern {
+  position: absolute;
+  inset: 6px;
+  border: 1px dashed rgba(56, 189, 248, 0.2);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
 /* Micro-animations */
 @keyframes subtlePulse {
   0%, 100% { box-shadow: 0 0 10px rgba(34, 211, 238, 0.15); }
@@ -167,14 +223,37 @@ html, body {
   animation: starGlowPulse 1.6s infinite ease-in-out;
 }
 
-@keyframes timerAlertPulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.03); color: var(--danger); }
+@keyframes fateRevealGlow {
+  0% { transform: scale(0.92); opacity: 0; filter: brightness(1.6); }
+  60% { transform: scale(1.04); opacity: 1; filter: brightness(1.2); }
+  100% { transform: scale(1); opacity: 1; filter: brightness(1); }
 }
 
-.timer-critical {
-  animation: timerAlertPulse 0.75s infinite cubic-bezier(0.2, 0.8, 0.2, 1);
+.fate-reveal-anim {
+  animation: fateRevealGlow 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Timer Animations */
+@keyframes timerCriticalPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.8)); }
+}
+
+.timer-critical-pulse {
+  animation: timerCriticalPulse 0.6s infinite cubic-bezier(0.2, 0.8, 0.2, 1);
   color: var(--danger) !important;
+}
+
+/* Flash Transition Banner "⚡ TRẢ LỜI!" */
+@keyframes flashBannerAnim {
+  0% { transform: scale(0.85); opacity: 0; }
+  35% { transform: scale(1.06); opacity: 1; filter: brightness(1.4); }
+  75% { transform: scale(1); opacity: 1; filter: brightness(1.1); }
+  100% { transform: scale(0.95); opacity: 0.9; }
+}
+
+.transition-banner-anim {
+  animation: flashBannerAnim 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 /* Clean Custom Scrollbar */
@@ -191,4 +270,27 @@ html, body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--border-light);
+}
+
+/* Winner Trophy Bounce & Glow Animation */
+@keyframes trophyBounce {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-8px) scale(1.08);
+  }
+}
+
+@keyframes winnerCardGlow {
+  0%, 100% {
+    box-shadow: 0 0 35px rgba(251, 191, 36, 0.4), inset 0 0 20px rgba(251, 191, 36, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 60px rgba(251, 191, 36, 0.65), inset 0 0 30px rgba(251, 191, 36, 0.3);
+  }
+}
+
+.winner-card-pulse {
+  animation: winnerCardGlow 2s infinite ease-in-out;
 }

@@ -1,13 +1,12 @@
 // src/components/TeamBoard.jsx
 import React from 'react';
-import { LifeBuoy, Star, Trophy, Medal, CheckCircle2, Crown } from 'lucide-react';
+import { Shield, Crown, Medal, CheckCircle2 } from 'lucide-react';
 
 export default function TeamBoard({
   teams,
   rankings,
   activeTeamId,
   isFinalRound,
-  activeStarTeams = {},
   roundScoreDeltas = {},
   isResultRevealed
 }) {
@@ -42,7 +41,6 @@ export default function TeamBoard({
         const rankInfo = rankings[team.id];
         const rankBadge = getRankBadge(rankInfo);
         const isCurrentTurn = !isFinalRound && activeTeamId === team.id;
-        const isStarActiveThisTurn = activeStarTeams[team.id];
         const delta = roundScoreDeltas[team.id];
         const isTop1 = rankInfo?.rank === 1;
 
@@ -55,11 +53,9 @@ export default function TeamBoard({
                 : 'var(--surface)',
               border: isCurrentTurn 
                 ? '2px solid var(--primary)' 
-                : isStarActiveThisTurn 
-                  ? '2px solid var(--accent)' 
-                  : isTop1 
-                    ? '1.5px solid rgba(251, 191, 36, 0.4)' 
-                    : '1px solid var(--border)',
+                : isTop1 
+                  ? '1.5px solid rgba(251, 191, 36, 0.4)' 
+                  : '1px solid var(--border)',
               borderRadius: '10px',
               padding: '8px 12px',
               display: 'flex',
@@ -67,9 +63,7 @@ export default function TeamBoard({
               justifyContent: 'space-between',
               boxShadow: isCurrentTurn 
                 ? '0 0 16px rgba(34, 211, 238, 0.25)' 
-                : isStarActiveThisTurn 
-                  ? '0 0 16px rgba(251, 191, 36, 0.25)' 
-                  : 'none',
+                : 'none',
               transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
               position: 'relative'
             }}
@@ -151,7 +145,7 @@ export default function TeamBoard({
               )}
             </div>
 
-            {/* Bottom: Lifelines Status (🛟 & ⭐) */}
+            {/* Bottom: Shield & Correct Questions Count */}
             <div style={{
               display: 'flex',
               alignItems: 'center',
@@ -160,35 +154,19 @@ export default function TeamBoard({
               borderTop: '1px solid rgba(36, 59, 83, 0.5)',
               fontSize: '10px'
             }}>
-              {/* 🛟 CỨU VIỆN */}
+              {/* 🛡️ SHIELD Status */}
               <div style={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '3px',
-                color: team.rescueUsed ? 'var(--text-muted)' : 'var(--primary)',
-                textDecoration: team.rescueUsed ? 'line-through' : 'none',
-                opacity: team.rescueUsed ? 0.5 : 1,
-                fontWeight: 600
-              }} title={`Cứu viện: ${team.rescueUsed ? 'Đã dùng' : 'Sẵn sàng'}`}>
-                <LifeBuoy size={11} />
-                <span>🛟 {team.rescueUsed ? 'USED' : 'READY'}</span>
+                gap: '4px',
+                color: team.shield > 0 ? '#A78BFA' : 'var(--text-muted)',
+                fontWeight: team.shield > 0 ? 700 : 500
+              }}>
+                <Shield size={11} fill={team.shield > 0 ? '#A78BFA' : 'none'} />
+                <span>{team.shield > 0 ? `🛡️ x${team.shield}` : 'Chưa có khiên'}</span>
               </div>
 
-              {/* ⭐ NGÔI SAO HY VỌNG */}
-              <div style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '3px',
-                color: team.starUsed && !isStarActiveThisTurn ? 'var(--text-muted)' : 'var(--accent)',
-                textDecoration: team.starUsed && !isStarActiveThisTurn ? 'line-through' : 'none',
-                opacity: team.starUsed && !isStarActiveThisTurn ? 0.5 : 1,
-                fontWeight: isStarActiveThisTurn ? 800 : 600
-              }} className={isStarActiveThisTurn ? 'pulse-gold' : ''} title={`Ngôi sao hy vọng: ${isStarActiveThisTurn ? 'Đang kích hoạt' : team.starUsed ? 'Đã dùng' : 'Sẵn sàng'}`}>
-                <Star size={11} fill={isStarActiveThisTurn || !team.starUsed ? 'var(--accent)' : 'none'} />
-                <span>⭐ {isStarActiveThisTurn ? 'ACTIVE' : team.starUsed ? 'USED' : 'READY'}</span>
-              </div>
-
-              {/* Number of correct questions */}
+              {/* Correct count */}
               <div style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -196,7 +174,7 @@ export default function TeamBoard({
                 color: 'var(--text-secondary)'
               }}>
                 <CheckCircle2 size={10} color="var(--success)" />
-                <span>{team.correctCount || 0} đúng</span>
+                <span>{team.correctCount || 0} câu đúng</span>
               </div>
             </div>
           </div>

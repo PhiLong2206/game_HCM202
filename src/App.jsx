@@ -1,75 +1,120 @@
 // src/App.jsx
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { QUESTIONS, INITIAL_TEAMS } from './data/questions';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { 
+  QUESTIONS, 
+  INITIAL_TEAMS, 
+  FATE_TYPES,
+  COOP_TEAM_QUESTIONS,
+  RESCUE_QUESTIONS,
+  GROUP_RESCUE_QUESTIONS,
+  UNITY_FINAL_QUESTION
+} from './data/questions';
 import GameHeader from './components/GameHeader';
 import TeamBoard from './components/TeamBoard';
-import TurnPlayPhase from './components/TurnPlayPhase';
-import FinalQuestionPhase from './components/FinalQuestionPhase';
+import CardGameBoard from './components/CardGameBoard';
+import CoopRound3Phase from './components/CoopRound3Phase';
 import FinalRanking from './components/FinalRanking';
 import MCPanel from './components/MCPanel';
+import confetti from 'canvas-confetti';
 import { 
-  playLockSound, 
-  playRevealSound, 
-  playCorrectSound, 
-  playWrongSound, 
-  playWarningAlarm, 
-  playGlitchSound, 
-  setMuted 
-} from './utils/audio';
-import { ShieldCheck, Play, LifeBuoy, Star } from 'lucide-react';
+  playSound, 
+  stopAllSounds, 
+  setSoundMuted, 
+  getSoundMuted, 
+  setSoundVolume, 
+  getSoundVolume 
+} from './utils/audioManager';
+import { Layers, Play, Sparkles, Shield, Coins, Flame } from 'lucide-react';
 
 export default function App() {
-  // Game states: 'intro' | 'playing' | 'final_ranking'
+  // Game state: 'intro' | 'playing' | 'final_ranking'
   const [gameState, setGameState] = useState('intro');
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
 
-  // Teams & Scores
+  // Rounds: 1 (R1), 2 (R2), 3 (Final)
+  const [currentRound, setCurrentRound] = useState(1);
+
+  // Turn index inside current round (0..3)
+  // Round 1 order: [1, 2, 3, 4]
+  // Round 2 order: [4, 3, 2, 1]
+  const [roundTurnIndex, setRoundTurnIndex] = useState(0);
+
+  // Teams & Scores (Starts with 1000 PTS each)
   const [teams, setTeams] = useState(INITIAL_TEAMS);
 
-  // Turn state for Questions 1-8
+  // Unified Game Phase State:
+  // 'CARD_SELECT' | 'CARD_CONFIRM' | 'BETTING' | 'READING' | 'TRANSITION_ANSWER' | 'ANSWERING' | 'ANSWER_LOCKED' | 'RESULT' | 'FATE_READY' | 'FATE_REVEAL' | 'ROUND_COMPLETE' | 'ROUND_TRANSITION' | 'FINAL'
+  const [gamePhase, setGamePhase] = useState('CARD_SELECT');
+  
+  // Used cards map for current round deck: { [cardId]: teamName }
+  const [usedCardMap, setUsedCardMap] = useState({});
+
+  const [selectedCard, setSelectedCard] = useState(null);
+  const [currentBet, setCurrentBet] = useState(null);
   const [chosenAnswer, setChosenAnswer] = useState(null);
-  const [isAnswerLocked, setIsAnswerLocked] = useState(false);
-  const [isResultRevealed, setIsResultRevealed] = useState(false);
-  const [turnResult, setTurnResult] = useState(null);
+  const [resultData, setResultData] = useState(null); // { isCorrect, isTimeout, delta, newScore }
+  const [fateResult, setFateResult] = useState(null);
 
-  // Lifelines for active turn
-  const [isStarActiveThisTurn, setIsStarActiveThisTurn] = useState(false);
-  const [rescueState, setRescueState] = useState(null); 
-  // { step: 'selecting_team' | 'consulting' | 'done', helperTeamId, helperTeamName, suggestion, usedInThisTurn: boolean }
-
-  // Final Round State (Question 9)
-  const [finalAnswers, setFinalAnswers] = useState({});
-  const [finalStarTeams, setFinalStarTeams] = useState({});
-  const [isFinalAnswerLocked, setIsFinalAnswerLocked] = useState(false);
-  const [isFinalResultRevealed, setIsFinalResultRevealed] = useState(false);
-  const [finalResults, setFinalResults] = useState({});
-  const [isFinalLocking, setIsFinalLocking] = useState(false);
-  const [finalCountdownStep, setFinalCountdownStep] = useState(null);
-
-  // Timer State
-  const [timerSeconds, setTimerSeconds] = useState(30);
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
-
-  // Audio & Modals
-  const [isAudioMuted, setIsAudioMuted] = useState(false);
-  const [isMCOpen, setIsMCOpen] = useState(false);
-
-  // Track point deltas for animation
+  // Track point deltas for floating animation
   const [roundScoreDeltas, setRoundScoreDeltas] = useState({});
 
-  const currentQuestion = useMemo(() => {
-    return QUESTIONS[currentQuestionIndex] || QUESTIONS[0];
-  }, [currentQuestionIndex]);
+  // Round 3 Cooperative Challenge status
+  const [coopSuccess, setCoopSuccess] = useState(false);
 
-  const assignedTeam = useMemo(() => {
-    if (currentQuestion.isFinal) return null;
-    return teams.find(t => t.id === currentQuestion.assignedTeamId) || teams[0];
-  }, [teams, currentQuestion]);
+  // History stack for [UNDO LAST ACTION]
+  const [historyStack, setHistoryStack] = useState([]);
+
+  // Strict Single Timer & Timeout Refs
+  const [timerSeconds, setTimerSeconds] = useState(5);
+  const [isTimerPaused, setIsTimerPaused] = useState(false);
+  const timerRef = useRef(null);
+  const timeoutRef = useRef(null);
+  const isEvaluatingRef = useRef(false);
+  const timeLeftRef = useRef(0);
+
+  // State refs to prevent stale closure in interval handlers
+  const chosenAnswerRef = useRef(null);
+  chosenAnswerRef.current = chosenAnswer;
+
+  const currentBetRef = useRef(null);
+  currentBetRef.current = currentBet;
+
+  const selectedCardRef = useRef(null);
+  selectedCardRef.current = selectedCard;
+
+  const activeTeamRef = useRef(null);
+
+  // Audio & MC Modal
+  const [isAudioMuted, setIsAudioMuted] = useState(() => getSoundMuted());
+  const [effectVolume, setEffectVolume] = useState(() => getSoundVolume());
+  const [isMCOpen, setIsMCOpen] = useState(false);
+
+  // Determine active team by round order
+  const round1Order = [1, 2, 3, 4];
+  const round2Order = [4, 3, 2, 1];
+
+  const activeTeamId = useMemo(() => {
+    if (currentRound === 1) return round1Order[roundTurnIndex] || 1;
+    if (currentRound === 2) return round2Order[roundTurnIndex] || 4;
+    return null; // Round 3 is final shared
+  }, [currentRound, roundTurnIndex]);
+
+  const activeTeam = useMemo(() => {
+    return teams.find(t => t.id === activeTeamId) || teams[0];
+  }, [teams, activeTeamId]);
+  activeTeamRef.current = activeTeam;
 
   const otherTeams = useMemo(() => {
-    if (!assignedTeam) return teams;
-    return teams.filter(t => t.id !== assignedTeam.id);
-  }, [teams, assignedTeam]);
+    return teams.filter(t => t.id !== activeTeam.id);
+  }, [teams, activeTeam]);
+
+  // Questions for current round deck (12 cards per round)
+  const roundQuestions = useMemo(() => {
+    return QUESTIONS.filter(q => q.round === currentRound);
+  }, [currentRound]);
+
+  const finalQuestion = useMemo(() => {
+    return QUESTIONS.find(q => q.isFinal) || QUESTIONS[QUESTIONS.length - 1];
+  }, []);
 
   // Dynamic ranking with tie handling
   const rankings = useMemo(() => {
@@ -104,387 +149,519 @@ export default function App() {
     return rankMap;
   }, [teams]);
 
-  // Audio mute toggle
+  // Audio mute toggle (synced with audioManager & localStorage)
   const toggleMute = useCallback(() => {
     const next = !isAudioMuted;
     setIsAudioMuted(next);
-    setMuted(next);
+    setSoundMuted(next);
   }, [isAudioMuted]);
+
+  // Audio volume change
+  const handleVolumeChange = useCallback((newVol) => {
+    setEffectVolume(newVol);
+    setSoundVolume(newVol);
+  }, []);
+
+  // Clear all running timer/timeout intervals
+  const clearAllTimers = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    setIsTimerPaused(false);
+  }, []);
+
+  useEffect(() => {
+    return () => clearAllTimers();
+  }, [clearAllTimers]);
+
+  // Save state snapshot before modifications
+  const saveSnapshot = useCallback(() => {
+    setHistoryStack(prev => [
+      ...prev.slice(-10),
+      {
+        teams: JSON.parse(JSON.stringify(teams)),
+        currentRound,
+        roundTurnIndex,
+        gamePhase,
+        usedCardMap: { ...usedCardMap },
+        selectedCard,
+        currentBet,
+        chosenAnswer,
+        resultData: resultData ? { ...resultData } : null,
+        fateResult: fateResult ? JSON.parse(JSON.stringify(fateResult)) : null,
+        roundScoreDeltas: { ...roundScoreDeltas }
+      }
+    ]);
+  }, [teams, currentRound, roundTurnIndex, gamePhase, usedCardMap, selectedCard, currentBet, chosenAnswer, resultData, fateResult, roundScoreDeltas]);
+
+  // Undo last action
+  const handleUndoLastAction = () => {
+    if (historyStack.length === 0) return;
+    clearAllTimers();
+    const last = historyStack[historyStack.length - 1];
+    setHistoryStack(prev => prev.slice(0, prev.length - 1));
+
+    setTeams(last.teams);
+    setCurrentRound(last.currentRound);
+    setRoundTurnIndex(last.roundTurnIndex);
+    setGamePhase(last.gamePhase);
+    setUsedCardMap(last.usedCardMap);
+    setSelectedCard(last.selectedCard);
+    setCurrentBet(last.currentBet);
+    setChosenAnswer(last.chosenAnswer);
+    setResultData(last.resultData);
+    setFateResult(last.fateResult);
+    setRoundScoreDeltas(last.roundScoreDeltas);
+    playWarningAlarm();
+  };
+
+  // Helper to adjust team score with delta animation
+  const updateTeamScoreDelta = (teamId, delta) => {
+    setTeams(prev => prev.map(t => {
+      if (t.id === teamId) {
+        return { ...t, score: Math.max(0, t.score + delta) };
+      }
+      return t;
+    }));
+    setRoundScoreDeltas(prev => ({ ...prev, [teamId]: delta }));
+  };
 
   // Start game from intro
   const handleStartGame = () => {
-    playRevealSound();
+    clearAllTimers();
+    playSound('reveal');
     setGameState('playing');
-    setCurrentQuestionIndex(0);
-    resetTurnState();
-    setTimerSeconds(30);
-    setIsTimerRunning(false);
-  };
-
-  const resetTurnState = () => {
+    setCurrentRound(1);
+    setRoundTurnIndex(0);
+    setGamePhase('CARD_SELECT');
+    setUsedCardMap({});
+    setSelectedCard(null);
+    setCurrentBet(null);
     setChosenAnswer(null);
-    setIsAnswerLocked(false);
-    setIsResultRevealed(false);
-    setTurnResult(null);
-    setIsStarActiveThisTurn(false);
-    setRescueState(null);
+    setResultData(null);
+    setFateResult(null);
     setRoundScoreDeltas({});
   };
 
-  // Turn: Select answer for active team
-  const handleSelectAnswer = (answerKey) => {
-    setChosenAnswer(answerKey);
+  // Step 1: Click card on board -> lifts card and prompts confirmation
+  const handleSelectCard = (card) => {
+    saveSnapshot();
+    setSelectedCard(card);
+    setGamePhase('CARD_CONFIRM');
+    playSound('lock');
   };
 
-  // Turn: Toggle Star of Hope
-  const handleToggleStar = () => {
-    if (!assignedTeam?.starUsed) {
-      setIsStarActiveThisTurn(prev => !prev);
-      playWarningAlarm();
-    }
+  // Cancel card selection -> return to CARD_SELECT
+  const handleCancelSelectCard = () => {
+    setSelectedCard(null);
+    setGamePhase('CARD_SELECT');
+    playSound('lock');
   };
 
-  const [wasTimerRunningBeforeRescue, setWasTimerRunningBeforeRescue] = useState(false);
-
-  // Turn: Start Cứu Viện (Pauses main question timer)
-  const handleStartRescue = () => {
-    if (!assignedTeam?.rescueUsed && !rescueState?.usedInThisTurn) {
-      if (isTimerRunning) {
-        setWasTimerRunningBeforeRescue(true);
-        setIsTimerRunning(false);
-      }
-      setRescueState({ step: 'selecting_team' });
-      playWarningAlarm();
-    }
-  };
-
-  const handleCancelRescue = () => {
-    setRescueState(null);
-    if (wasTimerRunningBeforeRescue) {
-      setIsTimerRunning(true);
-      setWasTimerRunningBeforeRescue(false);
-    }
-  };
-
-  const handleSelectRescueTeam = (helperTeam) => {
-    setRescueState({
-      step: 'consulting',
-      helperTeamId: helperTeam.id,
-      helperTeamName: helperTeam.name,
-      suggestion: null,
-      usedInThisTurn: true
-    });
-  };
-
-  const handleSelectRescueSuggestion = (suggestionKey) => {
-    playLockSound();
-    setRescueState(prev => ({
-      ...prev,
-      step: 'suggested',
-      suggestion: suggestionKey
-    }));
-  };
-
-  // MC clicks Continue after helper team suggested an answer
-  const handleContinueAfterRescue = () => {
-    setRescueState(prev => ({
-      ...prev,
-      step: 'collapsed'
-    }));
-    // Resume question timer from where it paused
-    if (wasTimerRunningBeforeRescue) {
-      setIsTimerRunning(true);
-      setWasTimerRunningBeforeRescue(false);
-    }
-  };
-
-  // Turn: Lock answer
-  const handleLockAnswer = () => {
-    setIsAnswerLocked(true);
-    setIsTimerRunning(false);
-    playLockSound();
-  };
-
-  // Turn: Reveal result and apply scoring
-  const handleRevealResult = () => {
-    const isCorrect = chosenAnswer === currentQuestion.correctAnswer;
-    const points = currentQuestion.points;
-
-    let playingTeamDelta = 0;
-    if (isCorrect) {
-      playingTeamDelta = isStarActiveThisTurn ? points * 2 : points;
+  // Confirm card selection -> proceed to BETTING
+  const handleConfirmCardSelection = () => {
+    saveSnapshot();
+    setGamePhase('BETTING');
+    if (activeTeam.score <= 0) {
+      setCurrentBet(0);
     } else {
-      playingTeamDelta = isStarActiveThisTurn ? -points : 0;
+      setCurrentBet(null);
     }
+    playSound('lock');
+  };
 
-    // Check helper team bonus (+50 PTS if helper suggested correct answer)
-    let helperTeamBonus = 0;
-    let helperTeamId = null;
-    let isHelperCorrect = false;
+  // Select Bet amount
+  const handleSelectBet = (amount) => {
+    setCurrentBet(amount);
+    playSound('lock');
+  };
 
-    if (rescueState?.suggestion && rescueState.helperTeamId) {
-      helperTeamId = rescueState.helperTeamId;
-      isHelperCorrect = rescueState.suggestion === currentQuestion.correctAnswer;
-      if (isHelperCorrect) {
-        helperTeamBonus = 50;
+  // Confirm Bet & Lock Bet -> Card Flip & Start 10-second Reading Phase
+  const handleConfirmBetAndFlip = () => {
+    if (typeof currentBet !== 'number' || !selectedCard) return;
+    saveSnapshot();
+    clearAllTimers();
+    isEvaluatingRef.current = false;
+
+    setChosenAnswer(null);
+    setResultData(null);
+    setFateResult(null);
+    setGamePhase('READING');
+    setTimerSeconds(10);
+    timeLeftRef.current = 10;
+    playSound('reveal');
+
+    // 10-second countdown for reading (increased from 5s)
+    timerRef.current = setInterval(() => {
+      timeLeftRef.current -= 1;
+      const t = timeLeftRef.current;
+      setTimerSeconds(Math.max(0, t));
+
+      if (t <= 0) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+
+        // 600ms Transition banner "⚡ TRẢ LỜI!"
+        setGamePhase('TRANSITION_ANSWER');
+        timeoutRef.current = setTimeout(() => {
+          startAnsweringPhase();
+        }, 600);
       }
-    }
+    }, 1000);
+  };
 
-    setRescueState(prev => prev ? ({ ...prev, isHelperCorrect }) : null);
+  // Start 15-second Answering Phase
+  const startAnsweringPhase = () => {
+    clearAllTimers();
+    isEvaluatingRef.current = false;
+    setGamePhase('ANSWERING');
+    setTimerSeconds(15);
+    timeLeftRef.current = 15;
 
-    const deltas = {};
-    const updatedTeams = teams.map((team) => {
-      let newScore = team.score;
-      let newCorrectCount = team.correctCount || 0;
-      let newRescueUsed = team.rescueUsed;
-      let newStarUsed = team.starUsed;
+    timerRef.current = setInterval(() => {
+      timeLeftRef.current -= 1;
+      const t = timeLeftRef.current;
+      setTimerSeconds(Math.max(0, t));
 
-      if (team.id === assignedTeam.id) {
-        newScore = Math.max(0, team.score + playingTeamDelta);
-        if (isCorrect) newCorrectCount += 1;
-        if (rescueState?.usedInThisTurn) newRescueUsed = true;
-        if (isStarActiveThisTurn) newStarUsed = true;
-        deltas[team.id] = playingTeamDelta;
-      } else if (team.id === helperTeamId && helperTeamBonus > 0) {
-        newScore = team.score + helperTeamBonus;
-        deltas[team.id] = helperTeamBonus;
+      if (t <= 4 && t > 0) {
+        playSound(t <= 3 ? 'warning-tick' : 'tick');
       }
+      if (t <= 0) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+        handleAnswerTimerExpired();
+      }
+    }, 1000);
+  };
 
-      return {
-        ...team,
-        score: newScore,
-        correctCount: newCorrectCount,
-        rescueUsed: newRescueUsed,
-        starUsed: newStarUsed
-      };
-    });
+  // Timeout handler when 15s expires
+  const handleAnswerTimerExpired = () => {
+    if (isEvaluatingRef.current) return;
+    isEvaluatingRef.current = true;
+    clearAllTimers();
 
-    setTeams(updatedTeams);
-    setRoundScoreDeltas(deltas);
-    setTurnResult({
-      isCorrect,
-      delta: playingTeamDelta,
-      isHelperCorrect,
-      helperTeamName: rescueState?.helperTeamName,
-      helperSuggestion: rescueState?.suggestion
-    });
-    setIsResultRevealed(true);
-
-    if (isCorrect || helperTeamBonus > 0) {
-      playCorrectSound();
+    const ans = chosenAnswerRef.current;
+    if (ans) {
+      // Auto-lock selected answer! System automatically evaluates!
+      handleLockAnswerWithOption(ans, true);
     } else {
-      playWrongSound();
-    }
-  };
+      // No answer selected: Timeout penalty
+      const bet = typeof currentBetRef.current === 'number' ? currentBetRef.current : 0;
+      const card = selectedCardRef.current;
+      const team = activeTeamRef.current;
 
-  // Next Question
-  const handleNextQuestion = () => {
-    if (currentQuestionIndex < 8) {
-      setCurrentQuestionIndex(prev => prev + 1);
-      resetTurnState();
-      setTimerSeconds(30);
-      setIsTimerRunning(false);
-
-      if (currentQuestionIndex + 1 === 4) {
-        playWarningAlarm(); // entering Round 2
-      } else if (currentQuestionIndex + 1 === 8) {
-        playGlitchSound(); // entering Final Round
+      if (card && team) {
+        setUsedCardMap(prev => ({ ...prev, [card.id]: team.name }));
       }
-    } else {
-      setGameState('final_ranking');
+
+      updateTeamScoreDelta(team.id, -bet);
+      setResultData({
+        isCorrect: false,
+        isTimeout: true,
+        delta: -bet,
+        newScore: Math.max(0, team.score - bet),
+        correctAnswer: card?.correctAnswer
+      });
+
+      setGamePhase('RESULT');
+      // Timeout sound only (prevents double wrong sound as requested)
+      playSound('timeout');
     }
   };
 
-  // Final Round (Question 9) Handlers
-  const handleSelectFinalAnswer = (teamId, answerKey) => {
-    setFinalAnswers(prev => ({
-      ...prev,
-      [teamId]: answerKey
-    }));
+  // Select answer option (before lock, can switch freely - SILENT as requested)
+  const handleSelectAnswer = (optionKey) => {
+    if (gamePhase !== 'ANSWERING') return;
+    setChosenAnswer(optionKey);
   };
 
-  const handleToggleFinalStar = (teamId) => {
-    const team = teams.find(t => t.id === teamId);
-    if (!team?.starUsed) {
-      setFinalStarTeams(prev => ({
-        ...prev,
-        [teamId]: !prev[teamId]
-      }));
-      playWarningAlarm();
+  // Lock answer with an option (Early lock or auto-lock) -> AUTOMATIC SYSTEM EVALUATION!
+  const handleLockAnswerWithOption = (optionKey, fromTimeout = false) => {
+    if (!fromTimeout) {
+      if (isEvaluatingRef.current) return;
+      isEvaluatingRef.current = true;
     }
-  };
+    clearAllTimers();
 
-  const handleLockFinalAnswers = () => {
-    setIsFinalLocking(true);
-    setIsTimerRunning(false);
-    playGlitchSound();
+    const card = selectedCardRef.current;
+    const bet = typeof currentBetRef.current === 'number' ? currentBetRef.current : 0;
+    const team = activeTeamRef.current;
+    if (!card || !team) return;
 
-    setFinalCountdownStep(3);
+    saveSnapshot();
 
-    setTimeout(() => {
-      setFinalCountdownStep(2);
-      playLockSound();
-    }, 700);
+    // Mark card as USED by current team
+    setUsedCardMap(prev => ({ ...prev, [card.id]: team.name }));
 
-    setTimeout(() => {
-      setFinalCountdownStep(1);
-      playLockSound();
-    }, 1400);
+    // Lock sound & show locked state
+    playSound('lock');
+    setGamePhase('ANSWER_LOCKED');
 
-    setTimeout(() => {
-      setFinalCountdownStep('reveal');
-      playRevealSound();
-    }, 2100);
-
-    setTimeout(() => {
-      setIsFinalLocking(false);
-      setFinalCountdownStep(null);
-      setIsFinalAnswerLocked(true);
-    }, 2800);
-  };
-
-  const handleRevealFinalResults = () => {
-    const points = currentQuestion.points; // 300
-    const correctAnswer = currentQuestion.correctAnswer;
-    const results = {};
-    const deltas = {};
-
-    const updatedTeams = teams.map((team) => {
-      const chosen = finalAnswers[team.id];
-      const isCorrect = chosen === correctAnswer;
-      const isStarActive = Boolean(finalStarTeams[team.id]);
-
-      let delta = 0;
+    // 350ms suspense before showing result & sound
+    const isCorrect = optionKey === card.correctAnswer;
+    timeoutRef.current = setTimeout(() => {
       if (isCorrect) {
-        delta = isStarActive ? points * 2 : points;
+        // CORRECT: score += bet, unlock Fate
+        updateTeamScoreDelta(team.id, bet);
+        setTeams(prev => prev.map(t => t.id === team.id ? { ...t, correctCount: (t.correctCount || 0) + 1 } : t));
+
+        setResultData({
+          isCorrect: true,
+          isTimeout: false,
+          delta: bet,
+          newScore: team.score + bet,
+          correctAnswer: card.correctAnswer
+        });
+
+        setGamePhase('FATE_READY');
+        playSound('correct-cheer');
+
+        // Light confetti for correct answer
+        confetti({
+          particleCount: 35,
+          spread: 55,
+          origin: { y: 0.65 },
+          colors: ['#22D3EE', '#38BDF8', '#FBBF24', '#34D399']
+        });
       } else {
-        delta = isStarActive ? -points : 0;
+        // WRONG: score -= bet, Fate LOCKED
+        updateTeamScoreDelta(team.id, -bet);
+
+        setResultData({
+          isCorrect: false,
+          isTimeout: false,
+          delta: -bet,
+          newScore: Math.max(0, team.score - bet),
+          correctAnswer: card.correctAnswer
+        });
+
+        setGamePhase('RESULT');
+        playSound('wrong-sad');
       }
+    }, 350);
+  };
 
-      const newScore = Math.max(0, team.score + delta);
-      const newCorrectCount = (team.correctCount || 0) + (isCorrect ? 1 : 0);
-      const newStarUsed = isStarActive ? true : team.starUsed;
+  // User/MC clicks [🔒 KHÓA ĐÁP ÁN]
+  const handleLockAnswer = () => {
+    if (gamePhase !== 'ANSWERING' || !chosenAnswer || isEvaluatingRef.current) return;
+    handleLockAnswerWithOption(chosenAnswer);
+  };
 
-      results[team.id] = { isCorrect, delta, isStarActive };
-      deltas[team.id] = delta;
+  // Open Fate Card (Only if Correct)
+  const handleOpenFate = () => {
+    if (gamePhase !== 'FATE_READY' || !selectedCard?.fate) return;
+    saveSnapshot();
 
-      return {
-        ...team,
-        score: newScore,
-        correctCount: newCorrectCount,
-        starUsed: newStarUsed
-      };
+    const fateType = selectedCard.fate.type;
+    const fateInfo = FATE_TYPES[fateType];
+    let bonusPoints = 0;
+    let headline = "";
+    let description = "";
+    let shieldTriggered = false;
+    let mysteryValue = null;
+
+    if (fateType === 'LUCKY') {
+      bonusPoints = 200;
+      headline = "+200 PTS";
+      description = "May mắn mỉm cười! Đội nhận thêm 200 PTS trực tiếp vào quỹ điểm.";
+      updateTeamScoreDelta(activeTeam.id, 200);
+    } else if (fateType === 'JACKPOT') {
+      bonusPoints = currentBet;
+      headline = `+${currentBet} PTS (ĐẠI THẮNG VANG DỘI)`;
+      description = `Thưởng thêm đúng bằng số điểm cược vừa thắng (+${currentBet} PTS).`;
+      updateTeamScoreDelta(activeTeam.id, currentBet);
+    } else if (fateType === 'ALLY') {
+      bonusPoints = 100;
+      headline = "+100 PTS & CHỌN ĐỒNG HÀNH";
+      description = "Tinh thần đại đoàn kết! Đội của bạn nhận +100 PTS, hãy chọn 1 đội bạn để cùng nhận +100 PTS.";
+      updateTeamScoreDelta(activeTeam.id, 100);
+    } else if (fateType === 'SHIELD') {
+      headline = "NHẬN 1 LÁ CHẮN BẢO HỘ 🛡️";
+      description = "Đội nhận 1 Lá Chắn Bảo Hộ giúp vô hiệu hóa biến cố xấu tiếp theo.";
+      setTeams(prev => prev.map(t => t.id === activeTeam.id ? { ...t, shield: (t.shield || 0) + 1 } : t));
+    } else if (fateType === 'NEUTRAL') {
+      headline = "BÌNH YÊN VÔ SỰ (0 PTS)";
+      description = "Một lượt bình yên. Không có gì xảy ra.";
+    } else if (fateType === 'BAD_LUCK') {
+      if (activeTeam.shield > 0) {
+        shieldTriggered = true;
+        headline = "🛡️ BẢO HỘ ĐÃ KÍCH HOẠT!";
+        description = "Biến cố -100 PTS đã bị Lá Chắn Bảo Hộ chặn đứng hoàn toàn! Khiên đã tiêu hao.";
+        setTeams(prev => prev.map(t => t.id === activeTeam.id ? { ...t, shield: Math.max(0, (t.shield || 0) - 1) } : t));
+      } else {
+        bonusPoints = -100;
+        headline = "BIẾN CỐ -100 PTS";
+        description = "Biến cố bất ngờ! Đội bị trừ 100 PTS.";
+        updateTeamScoreDelta(activeTeam.id, -100);
+      }
+    } else if (fateType === 'MYSTERY_GIFT') {
+      const giftAmounts = [100, 200, 300];
+      mysteryValue = giftAmounts[Math.floor(Math.random() * giftAmounts.length)];
+      bonusPoints = mysteryValue;
+      headline = `+${mysteryValue} PTS BẤT NGỜ!`;
+      description = `Mở hộp quà bí mật nhận được phần thưởng trị giá +${mysteryValue} PTS!`;
+      updateTeamScoreDelta(activeTeam.id, mysteryValue);
+    }
+
+    setFateResult({
+      fateInfo,
+      bonusPoints,
+      headline,
+      description,
+      shieldTriggered,
+      mysteryValue,
+      allyTeamId: null
     });
 
-    setTeams(updatedTeams);
-    setFinalResults(results);
-    setRoundScoreDeltas(deltas);
-    setIsFinalResultRevealed(true);
+    setGamePhase('FATE_REVEAL');
+    playSound('fate-reveal');
 
-    const hasAnyCorrect = Object.values(results).some(r => r.isCorrect);
-    if (hasAnyCorrect) {
-      playCorrectSound();
+    // Trigger specific fate sound after reveal whoosh (~450ms)
+    timeoutRef.current = setTimeout(() => {
+      if (fateType === 'LUCKY') {
+        playSound('reward');
+      } else if (fateType === 'JACKPOT') {
+        playSound('jackpot');
+      } else if (fateType === 'ALLY') {
+        playSound('ally');
+      } else if (fateType === 'SHIELD') {
+        playSound('shield');
+      } else if (fateType === 'BAD_LUCK') {
+        if (shieldTriggered) {
+          playSound('shield-block');
+        } else {
+          playSound('bad-luck');
+        }
+      } else if (fateType === 'MYSTERY_GIFT') {
+        playSound('mystery');
+      }
+    }, 450);
+  };
+
+  // Ally pick companion team for +100 PTS (CÙNG TIẾN!)
+  const handleSelectAllyTeam = (allyId) => {
+    saveSnapshot();
+    updateTeamScoreDelta(allyId, 100);
+    const allyTeamName = teams.find(t => t.id === allyId)?.name || `Đội ${allyId}`;
+    setFateResult(prev => ({
+      ...prev,
+      allyTeamId: allyId,
+      description: `${prev.description} ➔ Đã tặng +100 PTS cho ${allyTeamName}!`
+    }));
+    playSound('team-up');
+  };
+
+  // Move to next team or round completion
+  const handleContinueTurn = () => {
+    saveSnapshot();
+    clearAllTimers();
+    setRoundScoreDeltas({});
+    setChosenAnswer(null);
+    setSelectedCard(null);
+    setCurrentBet(null);
+    setResultData(null);
+    setFateResult(null);
+
+    if (roundTurnIndex < 3) {
+      // Next team in current round -> returns to SAME Card Board!
+      setRoundTurnIndex(prev => prev + 1);
+      setGamePhase('CARD_SELECT');
     } else {
-      playWrongSound();
+      // 4 turns of round completed!
+      if (currentRound === 1) {
+        // Round 1 Complete banner (~1.2s)
+        setGamePhase('ROUND_COMPLETE');
+        timeoutRef.current = setTimeout(() => {
+          // Transition to Round 2 (~1.2s)
+          setGamePhase('ROUND_TRANSITION');
+          timeoutRef.current = setTimeout(() => {
+            setCurrentRound(2);
+            setRoundTurnIndex(0);
+            setUsedCardMap({}); // 12 brand new cards for Round 2!
+            setGamePhase('CARD_SELECT');
+            playSound('reveal');
+          }, 1200);
+        }, 1200);
+      } else if (currentRound === 2) {
+        // Round 2 Complete banner (~700ms)
+        setGamePhase('ROUND_COMPLETE');
+        timeoutRef.current = setTimeout(() => {
+          // Transition to Round 3: 🤝 ROUND 3 - THỬ THÁCH ĐẠI ĐOÀN KẾT (~1.3s)
+          setGamePhase('ROUND3_TRANSITION');
+          timeoutRef.current = setTimeout(() => {
+            setCurrentRound(3);
+            setGamePhase('ROUND3_COOP');
+            playSound('reveal');
+          }, 1300);
+        }, 700);
+      }
+    }
+  };
+
+  // Pause / Resume Timer
+  const handleTogglePauseTimer = () => {
+    setIsTimerPaused(prev => !prev);
+  };
+
+  // Round 3 Cooperative Challenge: Apply +300 PTS to all teams if successful
+  const handleApplyCoopBonus = (bonusPoints, isSuccess) => {
+    saveSnapshot();
+    setCoopSuccess(isSuccess);
+    if (isSuccess && bonusPoints > 0) {
+      setTeams(prev => prev.map(t => ({
+        ...t,
+        score: t.score + bonusPoints,
+        correctCount: (t.correctCount || 0) + 1
+      })));
+      setRoundScoreDeltas({
+        1: bonusPoints,
+        2: bonusPoints,
+        3: bonusPoints,
+        4: bonusPoints
+      });
     }
   };
 
   // Reset entire game
   const handleResetGame = () => {
+    clearAllTimers();
+    stopAllSounds();
+    playSound('glitch');
     setGameState('intro');
-    setCurrentQuestionIndex(0);
+    setCurrentRound(1);
+    setRoundTurnIndex(0);
     setTeams(INITIAL_TEAMS);
-    resetTurnState();
-    setFinalAnswers({});
-    setFinalStarTeams({});
-    setIsFinalAnswerLocked(false);
-    setIsFinalResultRevealed(false);
-    setFinalResults({});
-    setTimerSeconds(30);
-    setIsTimerRunning(false);
-    setIsMCOpen(false);
+    setUsedCardMap({});
+    setSelectedCard(null);
+    setCurrentBet(null);
+    setChosenAnswer(null);
+    setResultData(null);
+    setFateResult(null);
+    setRoundScoreDeltas({});
+    setHistoryStack([]);
+    setCoopSuccess(false);
+    setGamePhase('CARD_SELECT');
   };
 
-  // Reset current question
-  const handleResetCurrentQuestion = () => {
-    if (currentQuestionIndex === 8) {
-      setFinalAnswers({});
-      setFinalStarTeams({});
-      setIsFinalAnswerLocked(false);
-      setIsFinalResultRevealed(false);
-      setFinalResults({});
-    } else {
-      resetTurnState();
-    }
-    setTimerSeconds(30);
-    setIsTimerRunning(false);
-  };
-
-  // MC Helpers
-  const handleUpdateTeamName = (id, newName) => {
-    setTeams(prev => prev.map(t => t.id === id ? { ...t, name: newName } : t));
-  };
-
-  const handleUpdateTeamScore = (id, newScore) => {
-    setTeams(prev => prev.map(t => t.id === id ? { ...t, score: newScore } : t));
-  };
-
-  const handleToggleTeamLifeline = (id, lifelineType) => {
-    setTeams(prev => prev.map(t => {
-      if (t.id !== id) return t;
-      if (lifelineType === 'rescue') {
-        return { ...t, rescueUsed: !t.rescueUsed };
-      } else if (lifelineType === 'star') {
-        return { ...t, starUsed: !t.starUsed };
-      }
-      return t;
-    }));
-  };
-
-  const handleJumpQuestion = (targetIndex) => {
-    setCurrentQuestionIndex(targetIndex);
-    if (targetIndex === 8) {
-      setFinalAnswers({});
-      setFinalStarTeams({});
-      setIsFinalAnswerLocked(false);
-      setIsFinalResultRevealed(false);
-      setFinalResults({});
-    } else {
-      resetTurnState();
-    }
-    setTimerSeconds(30);
-    setIsTimerRunning(false);
-    setIsMCOpen(false);
-  };
-
-  // Keyboard shortcut listener
+  // Keyboard Shortcuts Hook
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
-
-      if (e.code === 'Space') {
-        e.preventDefault();
-        setIsTimerRunning(prev => !prev);
-      } else if (e.code === 'KeyM') {
+      if (e.code === 'KeyM') {
         toggleMute();
       } else if (e.code === 'Escape') {
-        setIsMCOpen(false);
+        setIsMCOpen(prev => !prev);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [toggleMute]);
-
-  const activeStarTeamsMap = useMemo(() => {
-    if (currentQuestion.isFinal) {
-      return finalStarTeams;
-    }
-    if (isStarActiveThisTurn && assignedTeam) {
-      return { [assignedTeam.id]: true };
-    }
-    return {};
-  }, [currentQuestion.isFinal, finalStarTeams, isStarActiveThisTurn, assignedTeam]);
 
   return (
     <div style={{
@@ -493,13 +670,12 @@ export default function App() {
       display: 'flex',
       flexDirection: 'column',
       background: 'var(--bg-main)',
+      color: 'var(--text-primary)',
+      fontFamily: 'var(--font-main)',
       overflow: 'hidden',
       position: 'relative'
     }}>
-      {/* Subtle modern academic background grid */}
-      <div className="subtle-grid-overlay" />
-
-      {/* Screen 1: START SCREEN (Redesigned with requested hierarchy) */}
+      {/* Screen 1: INTRO SCREEN */}
       {gameState === 'intro' && (
         <div style={{
           width: '100%',
@@ -508,205 +684,154 @@ export default function App() {
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          padding: '24px 20px',
-          textAlign: 'center',
-          position: 'relative',
-          zIndex: 10
+          padding: '24px',
+          background: 'radial-gradient(circle at 50% 35%, rgba(34, 211, 238, 0.08), transparent 50%), var(--bg-main)',
+          position: 'relative'
         }}>
-          {/* Top Label: [ HCM202 ] Tư tưởng Hồ Chí Minh */}
+          {/* Main Title Badge */}
           <div style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: '8px',
-            background: 'rgba(34, 211, 238, 0.08)',
-            border: '1px solid rgba(34, 211, 238, 0.3)',
-            borderRadius: '20px',
-            padding: '4px 14px',
-            marginBottom: '14px',
-            color: 'var(--text-secondary)',
             fontSize: '13px',
-            fontWeight: 600
+            fontWeight: 800,
+            color: 'var(--primary)',
+            background: 'rgba(34, 211, 238, 0.1)',
+            padding: '5px 16px',
+            borderRadius: '20px',
+            border: '1px solid var(--primary)',
+            marginBottom: '14px'
           }}>
-            <span style={{
-              color: 'var(--primary)',
-              fontWeight: 800,
-              background: 'rgba(34, 211, 238, 0.15)',
-              padding: '1px 6px',
-              borderRadius: '4px'
-            }}>
-              HCM202
-            </span>
-            <span>Tư tưởng Hồ Chí Minh</span>
+            <Layers size={15} />
+            MÔN HỌC HCM202 — TƯ TƯỞNG HỒ CHÍ MINH
           </div>
 
-          {/* Main Title: Đấu trường Đại đoàn kết */}
           <h1 style={{
-            fontSize: 'clamp(38px, 4.2vw, 54px)',
+            fontSize: '44px',
             fontWeight: 800,
+            color: '#FFFFFF',
+            textAlign: 'center',
             letterSpacing: '-1px',
             lineHeight: 1.15,
-            color: 'var(--text-primary)',
-            marginBottom: '6px'
+            marginBottom: '8px'
           }}>
-            Đấu trường <span style={{
-              background: 'linear-gradient(135deg, #F8FAFC 20%, #67E8F9 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent'
-            }}>Đại đoàn kết</span>
+            ĐẤU TRƯỜNG <span style={{ color: 'var(--primary)' }}>ĐẠI ĐOÀN KẾT</span>
           </h1>
 
-          {/* Subtitle */}
           <p style={{
-            fontSize: '18px',
-            fontWeight: 500,
-            color: 'var(--text-secondary)',
-            marginBottom: '22px'
+            fontSize: '17px',
+            color: 'var(--accent)',
+            fontWeight: 700,
+            marginBottom: '24px',
+            letterSpacing: '1px'
           }}>
-            4 đội • 8 câu hỏi luân phiên • 1 câu Final
+            RÚT THẺ • ĐẶT ĐIỂM • TRẢ LỜI • MỞ VẬN MỆNH
           </p>
 
-          {/* 2 Ability Cards (Side by side on desktop) */}
+          {/* 3 Pillars & Gameplay Overview Box */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(2, 1fr)',
-            gap: '16px',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: '14px',
+            maxWidth: '920px',
             width: '100%',
-            maxWidth: '680px',
-            marginBottom: '20px'
-          }}>
-            {/* Card 1: 🛟 Cứu viện (Cyan Accent) */}
-            <div style={{
-              background: 'var(--surface)',
-              border: '1.5px solid var(--border)',
-              borderRadius: '14px',
-              padding: '14px 16px',
-              textAlign: 'left',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '6px',
-              transition: 'border-color 0.2s ease'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{
-                  width: '28px',
-                  height: '28px',
-                  borderRadius: '6px',
-                  background: 'rgba(34, 211, 238, 0.12)',
-                  color: 'var(--primary)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}>
-                  <LifeBuoy size={16} />
-                </div>
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: 800,
-                  color: 'var(--primary)'
-                }}>
-                  Cứu viện
-                </span>
-              </div>
-              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.45' }}>
-                Nhờ một đội khác tư vấn trong 10 giây. Tư vấn chính xác: đội hỗ trợ <strong>+50 PTS</strong>.
-              </p>
-            </div>
-
-            {/* Card 2: ⭐ Ngôi sao hy vọng (Gold Accent) */}
-            <div style={{
-              background: 'var(--surface)',
-              border: '1.5px solid var(--border)',
-              borderRadius: '14px',
-              padding: '14px 16px',
-              textAlign: 'left',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '6px',
-              transition: 'border-color 0.2s ease'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{
-                  width: '28px',
-                  height: '28px',
-                  borderRadius: '6px',
-                  background: 'rgba(251, 191, 36, 0.12)',
-                  color: 'var(--accent)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}>
-                  <Star size={16} fill="var(--accent)" />
-                </div>
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: 800,
-                  color: 'var(--accent)'
-                }}>
-                  Ngôi sao hy vọng
-                </span>
-              </div>
-              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.45' }}>
-                Kích hoạt trước khi khóa đáp án. Đúng: <strong>×2 điểm</strong> | Sai: <strong>−1× điểm</strong>.
-              </p>
-            </div>
-          </div>
-
-          {/* 3 Mini Badges for Rounds */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '12px',
             marginBottom: '26px'
           }}>
+            {/* Feature 1 */}
             <div style={{
               background: 'var(--surface)',
               border: '1px solid var(--border)',
-              borderRadius: '8px',
-              padding: '6px 14px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center'
+              borderRadius: '10px',
+              padding: '14px 16px',
+              textAlign: 'center'
             }}>
-              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 700 }}>ROUND 1</span>
-              <span style={{ fontSize: '13px', color: 'var(--accent)', fontWeight: 800 }}>100 PTS</span>
+              <div style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '8px',
+                background: 'rgba(34, 211, 238, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 10px',
+                color: 'var(--primary)'
+              }}>
+                <Coins size={18} />
+              </div>
+              <h3 style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                12 Lá Bài Bí Mật
+              </h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                Mỗi round gồm 12 lá bài. 4 đội rút 4 lá, 8 lá còn lại giữ nguyên bí mật và thay mới ở Round 2.
+              </p>
             </div>
 
+            {/* Feature 2 */}
             <div style={{
               background: 'var(--surface)',
               border: '1px solid var(--border)',
-              borderRadius: '8px',
-              padding: '6px 14px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center'
+              borderRadius: '10px',
+              padding: '14px 16px',
+              textAlign: 'center'
             }}>
-              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 700 }}>ROUND 2</span>
-              <span style={{ fontSize: '13px', color: 'var(--accent)', fontWeight: 800 }}>200 PTS</span>
+              <div style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '8px',
+                background: 'rgba(251, 191, 36, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 10px',
+                color: 'var(--accent)'
+              }}>
+                <Sparkles size={18} />
+              </div>
+              <h3 style={{ fontSize: '14px', fontWeight: 800, color: 'var(--accent)', marginBottom: '4px' }}>
+                Tự Động Chấm Điểm
+              </h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                10s đọc câu hỏi, 15s trả lời. Khóa đáp án là hệ thống tự so khớp và mở khóa Vận Mệnh nếu trả lời đúng.
+              </p>
             </div>
 
+            {/* Feature 3 */}
             <div style={{
               background: 'var(--surface)',
-              border: '1.5px solid var(--accent)',
-              borderRadius: '8px',
-              padding: '6px 14px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              boxShadow: '0 0 12px rgba(251, 191, 36, 0.15)'
+              border: '1px solid var(--border)',
+              borderRadius: '10px',
+              padding: '14px 16px',
+              textAlign: 'center'
             }}>
-              <span style={{ fontSize: '11px', color: 'var(--accent)', fontWeight: 800 }}>FINAL</span>
-              <span style={{ fontSize: '13px', color: '#FFFFFF', fontWeight: 800 }}>300 PTS</span>
+              <div style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '8px',
+                background: 'rgba(239, 68, 68, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 10px',
+                color: '#EF4444'
+              }}>
+                <Flame size={18} />
+              </div>
+              <h3 style={{ fontSize: '14px', fontWeight: 800, color: '#EF4444', marginBottom: '4px' }}>
+                Final Round ALL-IN
+              </h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                1 câu hỏi chung quyết định: Cả 4 đội bí mật đặt cược hoặc ALL-IN để xoay chuyển cục diện.
+              </p>
             </div>
           </div>
 
-          {/* Start Game Button (Requested specifications) */}
+          {/* Start Game Button */}
           <button
             onClick={handleStartGame}
-            className="btn-tactical btn-primary-cyan"
+            className="btn-tactical btn-primary-cyan pulse-cyan"
             style={{
               width: '320px',
-              height: '56px',
+              height: '54px',
               borderRadius: '10px',
               fontSize: '17px',
               fontWeight: 800,
@@ -714,7 +839,7 @@ export default function App() {
             }}
           >
             <Play size={18} fill="#FFFFFF" />
-            <span>Bắt đầu trò chơi</span>
+            <span>BẮT ĐẦU TRÒ CHƠI</span>
           </button>
         </div>
       )}
@@ -731,18 +856,17 @@ export default function App() {
         }}>
           {/* Header */}
           <GameHeader
-            currentQuestion={currentQuestion}
-            assignedTeam={assignedTeam}
+            currentRound={currentRound}
+            activeTeam={activeTeam}
+            currentBet={currentBet}
             timerSeconds={timerSeconds}
-            setTimerSeconds={setTimerSeconds}
-            isTimerRunning={isTimerRunning}
-            setIsTimerRunning={setIsTimerRunning}
+            gamePhase={gamePhase}
             isMuted={isAudioMuted}
             toggleMute={toggleMute}
             onOpenMC={() => setIsMCOpen(true)}
           />
 
-          {/* Main Gameplay Screen */}
+          {/* Main Card Game Play Area */}
           <main style={{
             flex: 1,
             display: 'flex',
@@ -751,44 +875,40 @@ export default function App() {
             overflow: 'hidden',
             position: 'relative'
           }}>
-            {!currentQuestion.isFinal ? (
-              <TurnPlayPhase
-                question={currentQuestion}
-                assignedTeam={assignedTeam}
+            {currentRound < 3 ? (
+              <CardGameBoard
+                roundQuestions={roundQuestions}
+                currentRound={currentRound}
+                activeTeam={activeTeam}
                 otherTeams={otherTeams}
+                usedCardMap={usedCardMap}
+                selectedCard={selectedCard}
+                onSelectCard={handleSelectCard}
+                onCancelSelectCard={handleCancelSelectCard}
+                onConfirmCardSelection={handleConfirmCardSelection}
+                currentBet={currentBet}
+                onSelectBet={handleSelectBet}
+                onConfirmBetAndFlip={handleConfirmBetAndFlip}
+                gamePhase={gamePhase}
+                timerSeconds={timerSeconds}
                 chosenAnswer={chosenAnswer}
                 onSelectAnswer={handleSelectAnswer}
-                isAnswerLocked={isAnswerLocked}
                 onLockAnswer={handleLockAnswer}
-                isResultRevealed={isResultRevealed}
-                onRevealResult={handleRevealResult}
-                onNextQuestion={handleNextQuestion}
-                rescueState={rescueState}
-                onStartRescue={handleStartRescue}
-                onCancelRescue={handleCancelRescue}
-                onSelectRescueTeam={handleSelectRescueTeam}
-                onSelectRescueSuggestion={handleSelectRescueSuggestion}
-                onContinueAfterRescue={handleContinueAfterRescue}
-                isStarActive={isStarActiveThisTurn}
-                onToggleStar={handleToggleStar}
-                turnResult={turnResult}
+                resultData={resultData}
+                onOpenFate={handleOpenFate}
+                fateResult={fateResult}
+                onSelectAllyTeam={handleSelectAllyTeam}
+                onContinueTurn={handleContinueTurn}
               />
             ) : (
-              <FinalQuestionPhase
-                question={currentQuestion}
+              <CoopRound3Phase
                 teams={teams}
-                finalAnswers={finalAnswers}
-                onSelectFinalAnswer={handleSelectFinalAnswer}
-                activeStarTeams={finalStarTeams}
-                onToggleFinalStar={handleToggleFinalStar}
-                isAnswerLocked={isFinalAnswerLocked}
-                onLockFinalAnswers={handleLockFinalAnswers}
-                isResultRevealed={isFinalResultRevealed}
-                onRevealFinalResults={handleRevealFinalResults}
+                coopTeamQuestions={COOP_TEAM_QUESTIONS}
+                rescueQuestions={RESCUE_QUESTIONS}
+                groupRescueQuestions={GROUP_RESCUE_QUESTIONS}
+                unityFinalQuestion={UNITY_FINAL_QUESTION}
+                onApplyCoopBonus={handleApplyCoopBonus}
                 onShowFinalPodium={() => setGameState('final_ranking')}
-                finalResults={finalResults}
-                isLocking={isFinalLocking}
-                countdownStep={finalCountdownStep}
               />
             )}
           </main>
@@ -797,11 +917,10 @@ export default function App() {
           <TeamBoard
             teams={teams}
             rankings={rankings}
-            activeTeamId={assignedTeam?.id}
-            isFinalRound={currentQuestion.isFinal}
-            activeStarTeams={activeStarTeamsMap}
+            activeTeamId={activeTeam?.id}
+            isFinalRound={currentRound === 3}
             roundScoreDeltas={roundScoreDeltas}
-            isResultRevealed={currentQuestion.isFinal ? isFinalResultRevealed : isResultRevealed}
+            isResultRevealed={['RESULT', 'FATE_READY', 'FATE_REVEAL'].includes(gamePhase)}
           />
         </div>
       )}
@@ -811,6 +930,7 @@ export default function App() {
         <FinalRanking
           teams={teams}
           onResetGame={handleResetGame}
+          coopSuccess={coopSuccess}
         />
       )}
 
@@ -819,19 +939,24 @@ export default function App() {
         isOpen={isMCOpen}
         onClose={() => setIsMCOpen(false)}
         teams={teams}
-        onUpdateTeamName={handleUpdateTeamName}
-        onUpdateTeamScore={handleUpdateTeamScore}
-        onToggleTeamLifeline={handleToggleTeamLifeline}
-        currentQuestionIndex={currentQuestionIndex}
-        onJumpQuestion={handleJumpQuestion}
-        onResetCurrentQuestion={handleResetCurrentQuestion}
+        onUpdateTeamName={(id, name) => setTeams(prev => prev.map(t => t.id === id ? { ...t, name } : t))}
+        onUpdateTeamScore={(id, score) => setTeams(prev => prev.map(t => t.id === id ? { ...t, score } : t))}
+        onUpdateTeamShield={(id, shield) => setTeams(prev => prev.map(t => t.id === id ? { ...t, shield } : t))}
+        currentRound={currentRound}
+        activeTeam={activeTeam}
+        selectedCard={selectedCard}
+        currentBet={currentBet}
+        gamePhase={gamePhase}
+        onContinueTurn={handleContinueTurn}
+        onUndoLastAction={handleUndoLastAction}
+        canUndo={historyStack.length > 0}
         onResetGame={handleResetGame}
         isMuted={isAudioMuted}
         onToggleMute={toggleMute}
-        timerSeconds={timerSeconds}
-        onSetTimerSeconds={setTimerSeconds}
-        isTimerRunning={isTimerRunning}
-        onToggleTimer={() => setIsTimerRunning(!isTimerRunning)}
+        effectVolume={effectVolume}
+        onVolumeChange={handleVolumeChange}
+        isTimerPaused={isTimerPaused}
+        onTogglePauseTimer={handleTogglePauseTimer}
       />
     </div>
   );

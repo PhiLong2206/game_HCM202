@@ -2,9 +2,9 @@
 import React, { useEffect, useState, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { Trophy, RotateCcw, CheckCircle2, Crown, Medal } from 'lucide-react';
-import { playWinnerFanfare, playGlitchSound, playLockSound } from '../utils/audio';
+import { playSound } from '../utils/audioManager';
 
-export default function FinalRanking({ teams, onResetGame }) {
+export default function FinalRanking({ teams, onResetGame, coopSuccess = false }) {
   // Sort teams: 1st by score descending, 2nd by correctCount descending
   const sortedTeams = [...teams].sort((a, b) => {
     if (b.score !== a.score) {
@@ -51,38 +51,51 @@ export default function FinalRanking({ teams, onResetGame }) {
   const timerRefs = useRef([]);
 
   useEffect(() => {
-    playGlitchSound();
+    playSound('glitch');
 
     const t1 = setTimeout(() => {
       setRevealStep('top4');
-      playLockSound();
-    }, 1600);
+      playSound('top4');
+    }, 1500);
 
     const t2 = setTimeout(() => {
       setRevealStep('top3');
-      playLockSound();
+      playSound('top3');
     }, 2800);
 
     const t3 = setTimeout(() => {
       setRevealStep('top2');
-      playLockSound();
-    }, 4000);
+      playSound('top2');
+    }, 4100);
 
+    // Pause 500ms after TOP 2 before revealing TOP 1
     const t4 = setTimeout(() => {
       setRevealStep('top1');
-      playWinnerFanfare();
+      playSound('victory-crowd');
 
+      // Strong Confetti celebration (Burst 1)
       confetti({
-        particleCount: 85,
-        spread: 70,
-        origin: { y: 0.6 },
-        colors: ['#22D3EE', '#FBBF24', '#38BDF8', '#F8FAFC']
+        particleCount: 120,
+        spread: 100,
+        origin: { y: 0.5 },
+        colors: ['#FBBF24', '#F59E0B', '#22D3EE', '#38BDF8', '#FFFFFF']
       });
-    }, 5800);
+
+      // Second burst for grand champion feeling
+      const tConfetti2 = setTimeout(() => {
+        confetti({
+          particleCount: 80,
+          spread: 120,
+          origin: { y: 0.4 },
+          colors: ['#FBBF24', '#34D399', '#EC4899', '#38BDF8']
+        });
+      }, 350);
+      timerRefs.current.push(tConfetti2);
+    }, 5100);
 
     const t5 = setTimeout(() => {
       setRevealStep('finished');
-    }, 7400);
+    }, 8000);
 
     timerRefs.current = [t1, t2, t3, t4, t5];
 
@@ -115,21 +128,39 @@ export default function FinalRanking({ teams, onResetGame }) {
     }}>
       {/* Title */}
       <div style={{ textAlign: 'center', marginTop: '2px' }}>
-        <div style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '6px',
-          fontSize: '11px',
-          fontWeight: 700,
-          color: 'var(--primary)',
-          background: 'rgba(34, 211, 238, 0.08)',
-          padding: '2px 8px',
-          borderRadius: '4px',
-          border: '1px solid rgba(34, 211, 238, 0.25)',
-          marginBottom: '4px'
-        }}>
-          FINAL STANDINGS
-        </div>
+        {coopSuccess ? (
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontSize: '12px',
+            fontWeight: 800,
+            color: 'var(--accent)',
+            background: 'rgba(251, 191, 36, 0.1)',
+            padding: '4px 14px',
+            borderRadius: '20px',
+            border: '1px solid var(--accent)',
+            marginBottom: '6px'
+          }}>
+            🤝 THỬ THÁCH ĐẠI ĐOÀN KẾT: HOÀN THÀNH (+300 PTS CHO TẤT CẢ)
+          </div>
+        ) : (
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontSize: '12px',
+            fontWeight: 700,
+            color: 'var(--text-muted)',
+            background: 'rgba(255, 255, 255, 0.05)',
+            padding: '4px 14px',
+            borderRadius: '20px',
+            border: '1px solid var(--border)',
+            marginBottom: '6px'
+          }}>
+            THỬ THÁCH ĐẠI ĐOÀN KẾT: CHƯA HOÀN THÀNH
+          </div>
+        )}
         <h1 style={{
           fontSize: '26px',
           fontWeight: 800,
@@ -191,9 +222,10 @@ export default function FinalRanking({ teams, onResetGame }) {
             return (
               <div
                 key={index}
+                className={revealed && isTop1 ? 'winner-card-pulse' : ''}
                 style={{
                   background: revealed ? bg : 'var(--surface)',
-                  border: `2px solid ${revealed ? border : 'var(--border)'}`,
+                  border: `2px solid ${revealed ? (isTop1 ? '#FBBF24' : border) : 'var(--border)'}`,
                   borderRadius: '12px',
                   height: height,
                   display: 'flex',
@@ -204,41 +236,54 @@ export default function FinalRanking({ teams, onResetGame }) {
                   position: 'relative',
                   opacity: revealed ? 1 : 0.2,
                   transform: revealed ? 'scale(1)' : 'scale(0.96)',
-                  boxShadow: revealed && isTop1 ? '0 0 30px rgba(251, 191, 36, 0.25)' : 'none',
+                  boxShadow: revealed && isTop1 
+                    ? '0 0 45px rgba(251, 191, 36, 0.45), inset 0 0 20px rgba(251, 191, 36, 0.15)' 
+                    : 'none',
                   transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)'
                 }}
               >
                 {revealed ? (
                   <>
-                    <div style={{ fontSize: isTop1 ? '34px' : '24px', marginBottom: '2px' }}>
+                    <div style={{ 
+                      fontSize: isTop1 ? '42px' : '24px', 
+                      marginBottom: '2px',
+                      animation: isTop1 ? 'trophyBounce 1.3s ease-in-out infinite' : 'none'
+                    }}>
                       {medal}
                     </div>
 
                     <div style={{
-                      fontSize: isTop1 ? '16px' : '13px',
-                      fontWeight: 800,
-                      color: color,
-                      marginBottom: '2px'
-                    }}>
-                      {isTie ? `ĐỒNG HẠNG #${rank}` : `TOP ${rank}`}
-                    </div>
-
-                    <div style={{
                       fontSize: isTop1 ? '18px' : '15px',
-                      fontWeight: 700,
+                      fontWeight: 800,
                       color: 'var(--text-primary)',
                       textAlign: 'center',
-                      marginBottom: '4px'
+                      marginBottom: isTop1 ? '2px' : '4px'
                     }}>
                       {team.name}
                     </div>
 
                     <div style={{
-                      fontSize: isTop1 ? '24px' : '18px',
-                      fontWeight: 800,
+                      fontSize: isTop1 ? '13px' : '13px',
+                      fontWeight: 900,
+                      color: isTop1 ? '#FBBF24' : color,
+                      background: isTop1 ? 'rgba(251, 191, 36, 0.2)' : 'transparent',
+                      padding: isTop1 ? '2px 14px' : '0',
+                      borderRadius: isTop1 ? '20px' : '0',
+                      border: isTop1 ? '1.5px solid #FBBF24' : 'none',
+                      letterSpacing: isTop1 ? '1.5px' : 'normal',
+                      marginBottom: '4px',
+                      textShadow: isTop1 ? '0 0 10px rgba(251, 191, 36, 0.5)' : 'none'
+                    }}>
+                      {isTop1 ? 'VÔ ĐỊCH' : (isTie ? `ĐỒNG HẠNG #${rank}` : `TOP ${rank}`)}
+                    </div>
+
+                    <div style={{
+                      fontSize: isTop1 ? '26px' : '18px',
+                      fontWeight: 900,
                       color: color,
                       marginBottom: '4px',
-                      fontVariantNumeric: 'tabular-nums'
+                      fontVariantNumeric: 'tabular-nums',
+                      textShadow: isTop1 ? '0 0 20px rgba(251, 191, 36, 0.5)' : 'none'
                     }}>
                       {team.score.toLocaleString()} <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>PTS</span>
                     </div>

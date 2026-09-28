@@ -6,13 +6,15 @@ import {
   Volume2, 
   VolumeX, 
   Eye, 
-  RefreshCw,
-  LifeBuoy,
-  Star,
-  Keyboard,
-  Settings
+  Shield, 
+  Keyboard, 
+  Settings, 
+  ArrowRight, 
+  Undo2,
+  Pause,
+  Play
 } from 'lucide-react';
-import { QUESTIONS } from '../data/questions';
+import { QUESTIONS, FATE_TYPES } from '../data/questions';
 
 export default function MCPanel({
   isOpen,
@@ -20,17 +22,22 @@ export default function MCPanel({
   teams,
   onUpdateTeamName,
   onUpdateTeamScore,
-  onToggleTeamLifeline,
-  currentQuestionIndex,
-  onJumpQuestion,
-  onResetCurrentQuestion,
+  onUpdateTeamShield,
+  currentRound,
+  activeTeam,
+  selectedCard,
+  currentBet,
+  gamePhase, // 'CARD_SELECT' | 'CARD_CONFIRM' | 'BETTING' | 'READING' | 'TRANSITION_ANSWER' | 'ANSWERING' | 'ANSWER_LOCKED' | 'RESULT' | 'FATE_READY' | 'FATE_REVEAL'
+  onContinueTurn,
+  onUndoLastAction,
+  canUndo,
   onResetGame,
   isMuted,
   onToggleMute,
-  timerSeconds,
-  onSetTimerSeconds,
-  isTimerRunning,
-  onToggleTimer
+  effectVolume = 0.6,
+  onVolumeChange,
+  isTimerPaused,
+  onTogglePauseTimer
 }) {
   const [selectedTeamId, setSelectedTeamId] = useState(1);
   const [manualScoreInput, setManualScoreInput] = useState('');
@@ -38,7 +45,7 @@ export default function MCPanel({
 
   if (!isOpen) return null;
 
-  const currentTeam = teams.find(t => t.id === selectedTeamId) || teams[0];
+  const currentManagedTeam = teams.find(t => t.id === selectedTeamId) || teams[0];
 
   const handleApplyScore = () => {
     const val = parseInt(manualScoreInput, 10);
@@ -62,8 +69,8 @@ export default function MCPanel({
     }}>
       <div style={{
         width: '100%',
-        maxWidth: '820px',
-        maxHeight: '92vh',
+        maxWidth: '840px',
+        maxHeight: '94vh',
         background: 'var(--surface)',
         border: '1px solid var(--border-light)',
         borderRadius: '14px',
@@ -104,12 +111,110 @@ export default function MCPanel({
 
         {/* Modal Body */}
         <div style={{
-          padding: '16px 18px',
+          padding: '14px 18px',
           overflowY: 'auto',
           display: 'flex',
           flexDirection: 'column',
-          gap: '14px'
+          gap: '12px'
         }}>
+          {/* Section 0: LIVE GAME STATUS & MC PACING CONTROLS */}
+          <div style={{
+            background: 'var(--bg-secondary)',
+            border: '1.5px solid var(--primary)',
+            borderRadius: '10px',
+            padding: '12px 14px'
+          }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '10px'
+            }}>
+              <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--primary)' }}>
+                ĐIỀU HÀNH GAME & NHỊP ĐỘ (MC PACING)
+              </span>
+
+              {/* Status Tags */}
+              <div style={{ display: 'flex', gap: '8px', fontSize: '11px', flexWrap: 'wrap' }}>
+                <span style={{ color: 'var(--accent)', fontWeight: 700 }}>
+                  Round: <strong>{currentRound}</strong>
+                </span>
+                <span style={{ color: 'var(--text-secondary)' }}>•</span>
+                <span style={{ color: 'var(--primary)', fontWeight: 700 }}>
+                  Đội: <strong>{activeTeam?.name || 'N/A'}</strong>
+                </span>
+                <span style={{ color: 'var(--text-secondary)' }}>•</span>
+                <span style={{ color: 'var(--text-primary)' }}>
+                  Thẻ: <strong>{selectedCard ? `CARD ${selectedCard.cardNum}` : 'Chưa chọn'}</strong>
+                </span>
+                <span style={{ color: 'var(--text-secondary)' }}>•</span>
+                <span style={{ color: 'var(--accent)' }}>
+                  Cược: <strong>{currentBet ? `${currentBet} PTS` : 'Chưa cược'}</strong>
+                </span>
+                <span style={{ color: 'var(--text-secondary)' }}>•</span>
+                <span style={{ color: '#38BDF8', fontWeight: 700 }}>
+                  Phase: <strong>{gamePhase}</strong>
+                </span>
+              </div>
+            </div>
+
+            {/* Pacing Action Buttons (NO manual correct/wrong buttons!) */}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {/* Pause/Resume Timer */}
+              {['READING', 'ANSWERING'].includes(gamePhase) && (
+                <button
+                  onClick={onTogglePauseTimer}
+                  className="btn-tactical"
+                  style={{
+                    padding: '7px 14px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    color: isTimerPaused ? 'var(--success)' : 'var(--accent)',
+                    borderColor: isTimerPaused ? 'var(--success)' : 'var(--accent)'
+                  }}
+                >
+                  {isTimerPaused ? <Play size={13} /> : <Pause size={13} />}
+                  <span>{isTimerPaused ? 'Tiếp tục Timer' : 'Tạm dừng Timer'}</span>
+                </button>
+              )}
+
+              {/* Next Turn */}
+              <button
+                disabled={!['RESULT', 'FATE_REVEAL'].includes(gamePhase)}
+                onClick={onContinueTurn}
+                className="btn-tactical btn-primary-cyan"
+                style={{
+                  padding: '7px 16px',
+                  fontSize: '12px',
+                  fontWeight: 800,
+                  opacity: ['RESULT', 'FATE_REVEAL'].includes(gamePhase) ? 1 : 0.4
+                }}
+              >
+                <ArrowRight size={14} />
+                <span>[ TIẾP TỤC / NEXT TEAM ]</span>
+              </button>
+
+              {/* Undo Last Action */}
+              <button
+                disabled={!canUndo}
+                onClick={onUndoLastAction}
+                className="btn-tactical"
+                style={{
+                  marginLeft: 'auto',
+                  padding: '7px 14px',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color: canUndo ? 'var(--accent)' : 'var(--text-muted)',
+                  borderColor: canUndo ? 'var(--accent)' : 'var(--border)',
+                  opacity: canUndo ? 1 : 0.4
+                }}
+              >
+                <Undo2 size={14} />
+                <span>[ UNDO ]</span>
+              </button>
+            </div>
+          </div>
+
           {/* Section 1: Team Manager */}
           <div style={{
             background: 'var(--bg-secondary)',
@@ -123,7 +228,7 @@ export default function MCPanel({
               color: 'var(--primary)',
               marginBottom: '8px'
             }}>
-              1. QUẢN LÝ ĐIỂM & QUYỀN TRỢ GIÚP (LIFELINES)
+              1. QUẢN LÝ ĐIỂM SỐ & KHIÊN BẢO HỘ (SHIELD)
             </div>
 
             {/* Team Tabs 1, 2, 3, 4 */}
@@ -144,13 +249,13 @@ export default function MCPanel({
                     fontWeight: selectedTeamId === t.id ? 700 : 500
                   }}
                 >
-                  {t.name} ({t.score} PTS)
+                  {t.name} ({t.score} PTS {t.shield > 0 ? `🛡️x${t.shield}` : ''})
                 </button>
               ))}
             </div>
 
             {/* Selected Team Controls */}
-            {currentTeam && (
+            {currentManagedTeam && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <div style={{ flex: 1 }}>
@@ -159,8 +264,8 @@ export default function MCPanel({
                     </label>
                     <input
                       type="text"
-                      value={currentTeam.name}
-                      onChange={(e) => onUpdateTeamName(currentTeam.id, e.target.value)}
+                      value={currentManagedTeam.name}
+                      onChange={(e) => onUpdateTeamName(currentManagedTeam.id, e.target.value)}
                       style={{
                         width: '100%',
                         background: 'var(--surface)',
@@ -177,7 +282,7 @@ export default function MCPanel({
 
                   <div style={{ flex: 1 }}>
                     <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '3px' }}>
-                      Điểm Hiện Tại: <strong style={{ color: 'var(--accent)' }}>{currentTeam.score} PTS</strong>
+                      Điểm Hiện Tại: <strong style={{ color: 'var(--accent)' }}>{currentManagedTeam.score} PTS</strong>
                     </label>
                     <div style={{ display: 'flex', gap: '4px' }}>
                       <input
@@ -210,10 +315,10 @@ export default function MCPanel({
                 {/* Quick Add/Subtract Buttons */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '11px', color: 'var(--text-secondary)', marginRight: '4px' }}>Cộng/Trừ nhanh:</span>
-                  {[+50, +100, +200, +300, -50, -100, -200, -300].map((delta) => (
+                  {[+50, +100, +200, +300, +500, -50, -100, -200, -300, -500].map((delta) => (
                     <button
                       key={delta}
-                      onClick={() => onUpdateTeamScore(currentTeam.id, Math.max(0, currentTeam.score + delta))}
+                      onClick={() => onUpdateTeamScore(currentManagedTeam.id, Math.max(0, currentManagedTeam.score + delta))}
                       className="btn-tactical"
                       style={{
                         padding: '3px 6px',
@@ -227,193 +332,93 @@ export default function MCPanel({
                   ))}
                 </div>
 
-                {/* Lifeline Toggle for Selected Team */}
-                <div style={{ display: 'flex', gap: '8px', paddingTop: '6px', borderTop: '1px dashed var(--border)' }}>
+                {/* Shield Toggle / Adjust */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingTop: '6px', borderTop: '1px dashed var(--border)' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                    Khiên Bảo Hộ: <strong style={{ color: 'var(--primary)' }}>{currentManagedTeam.shield || 0}</strong>
+                  </span>
                   <button
-                    onClick={() => onToggleTeamLifeline(currentTeam.id, 'rescue')}
+                    onClick={() => onUpdateTeamShield(currentManagedTeam.id, Math.max(0, (currentManagedTeam.shield || 0) + 1))}
                     className="btn-tactical"
-                    style={{
-                      flex: 1,
-                      padding: '5px 8px',
-                      fontSize: '11px',
-                      borderRadius: '6px',
-                      color: currentTeam.rescueUsed ? 'var(--text-muted)' : 'var(--primary)',
-                      borderColor: currentTeam.rescueUsed ? 'var(--border)' : 'var(--primary)'
-                    }}
+                    style={{ padding: '3px 8px', fontSize: '11px', borderRadius: '4px', color: 'var(--primary)' }}
                   >
-                    <LifeBuoy size={12} />
-                    <span>🛟 Cứu viện: {currentTeam.rescueUsed ? 'Đã dùng (Bấm để hồi phục)' : 'Chưa dùng'}</span>
+                    <Shield size={12} />
+                    <span>+1 Khiên 🛡️</span>
                   </button>
-
                   <button
-                    onClick={() => onToggleTeamLifeline(currentTeam.id, 'star')}
+                    disabled={!currentManagedTeam.shield}
+                    onClick={() => onUpdateTeamShield(currentManagedTeam.id, Math.max(0, (currentManagedTeam.shield || 0) - 1))}
                     className="btn-tactical"
-                    style={{
-                      flex: 1,
-                      padding: '5px 8px',
-                      fontSize: '11px',
-                      borderRadius: '6px',
-                      color: currentTeam.starUsed ? 'var(--text-muted)' : 'var(--accent)',
-                      borderColor: currentTeam.starUsed ? 'var(--border)' : 'var(--accent)'
-                    }}
+                    style={{ padding: '3px 8px', fontSize: '11px', borderRadius: '4px', color: 'var(--danger)' }}
                   >
-                    <Star size={12} fill={!currentTeam.starUsed ? 'var(--accent)' : 'none'} />
-                    <span>⭐ Sao hy vọng: {currentTeam.starUsed ? 'Đã dùng (Bấm để hồi phục)' : 'Chưa dùng'}</span>
+                    <span>-1 Khiên</span>
                   </button>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Section 2: Jump Question / Round */}
+          {/* Section 2: Audio & Reset Game */}
           <div style={{
             background: 'var(--bg-secondary)',
             border: '1px solid var(--border)',
             borderRadius: '10px',
-            padding: '10px 14px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '8px'
+            padding: '10px 14px'
           }}>
-            <div style={{
-              fontSize: '12px',
-              fontWeight: 800,
-              color: 'var(--primary)'
-            }}>
-              2. ĐIỀU HƯỚNG CÂU HỎI (QUICK JUMP)
+            <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--primary)', marginBottom: '6px' }}>
+              2. ÂM THANH & RESET GAME
             </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>R1 (100 PTS):</span>
-              {[0, 1, 2, 3].map((idx) => (
-                <button
-                  key={idx}
-                  onClick={() => onJumpQuestion(idx)}
-                  className="btn-tactical"
-                  style={{
-                    padding: '4px 8px',
-                    fontSize: '11px',
-                    borderRadius: '4px',
-                    background: currentQuestionIndex === idx ? 'var(--primary-dark)' : 'var(--surface)',
-                    borderColor: currentQuestionIndex === idx ? 'var(--primary)' : 'var(--border)',
-                    color: currentQuestionIndex === idx ? '#FFFFFF' : 'var(--text-secondary)'
-                  }}
-                >
-                  C{idx + 1} (Đ{QUESTIONS[idx].assignedTeamId})
-                </button>
-              ))}
-
-              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', marginLeft: '6px' }}>R2 (200 PTS):</span>
-              {[4, 5, 6, 7].map((idx) => (
-                <button
-                  key={idx}
-                  onClick={() => onJumpQuestion(idx)}
-                  className="btn-tactical"
-                  style={{
-                    padding: '4px 8px',
-                    fontSize: '11px',
-                    borderRadius: '4px',
-                    background: currentQuestionIndex === idx ? 'var(--primary-dark)' : 'var(--surface)',
-                    borderColor: currentQuestionIndex === idx ? 'var(--primary)' : 'var(--border)',
-                    color: currentQuestionIndex === idx ? '#FFFFFF' : 'var(--text-secondary)'
-                  }}
-                >
-                  C{idx + 1} (Đ{QUESTIONS[idx].assignedTeamId})
-                </button>
-              ))}
-
+            <div style={{ display: 'flex', gap: '8px' }}>
               <button
-                onClick={() => onJumpQuestion(8)}
-                className="btn-tactical btn-accent-gold"
-                style={{
-                  padding: '4px 10px',
-                  fontSize: '11px',
-                  borderRadius: '4px',
-                  marginLeft: '4px'
-                }}
-              >
-                FINAL (300 PTS)
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-              <button
-                onClick={onResetCurrentQuestion}
+                onClick={onToggleMute}
                 className="btn-tactical"
-                style={{ padding: '5px 10px', fontSize: '11px', borderRadius: '6px', color: 'var(--primary)' }}
+                style={{ flex: 1, padding: '6px 8px', fontSize: '11px', borderRadius: '6px' }}
               >
-                <RefreshCw size={11} />
-                <span>Reset câu hiện tại</span>
+                {isMuted ? <VolumeX size={13} color="var(--danger)" /> : <Volume2 size={13} color="var(--success)" />}
+                <span>{isMuted ? "Đang tắt âm thanh (Phím M)" : "Đang bật âm thanh (Phím M)"}</span>
               </button>
 
               <button
                 onClick={onResetGame}
                 className="btn-tactical btn-danger-soft"
-                style={{ marginLeft: 'auto', padding: '5px 12px', fontSize: '11px', borderRadius: '6px' }}
+                style={{ padding: '6px 12px', fontSize: '11px', borderRadius: '6px' }}
               >
-                <RotateCcw size={11} />
-                <span>Reset toàn bộ game</span>
+                <RotateCcw size={12} />
+                <span>Reset Toàn Bộ Game</span>
               </button>
+            </div>
+
+            {/* Effect Volume Slider */}
+            <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                  🔉 ÂM LƯỢNG HIỆU ỨNG (EFFECT VOLUME)
+                </span>
+                <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--primary)', fontVariantNumeric: 'tabular-nums' }}>
+                  {Math.round((effectVolume ?? 0.6) * 100)}%
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>0%</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={effectVolume ?? 0.6}
+                  onChange={(e) => onVolumeChange && onVolumeChange(parseFloat(e.target.value))}
+                  style={{
+                    flex: 1,
+                    accentColor: 'var(--primary)',
+                    cursor: 'pointer'
+                  }}
+                />
+                <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>100%</span>
+              </div>
             </div>
           </div>
 
-          {/* Section 3: Timer & Audio Controls */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(2, 1fr)',
-            gap: '10px'
-          }}>
-            <div style={{
-              background: 'var(--bg-secondary)',
-              border: '1px solid var(--border)',
-              borderRadius: '10px',
-              padding: '10px 14px'
-            }}>
-              <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--primary)', marginBottom: '6px' }}>
-                3. ĐIỀU CHỈNH TIMER ({timerSeconds}s)
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                {[15, 30, 45, 60].map((sec) => (
-                  <button
-                    key={sec}
-                    onClick={() => onSetTimerSeconds(sec)}
-                    className="btn-tactical"
-                    style={{ padding: '3px 8px', fontSize: '11px', borderRadius: '4px' }}
-                  >
-                    {sec}s
-                  </button>
-                ))}
-                <button
-                  onClick={() => onSetTimerSeconds(timerSeconds + 10)}
-                  className="btn-tactical"
-                  style={{ padding: '3px 8px', fontSize: '11px', borderRadius: '4px', color: 'var(--success)' }}
-                >
-                  +10s
-                </button>
-              </div>
-            </div>
-
-            <div style={{
-              background: 'var(--bg-secondary)',
-              border: '1px solid var(--border)',
-              borderRadius: '10px',
-              padding: '10px 14px'
-            }}>
-              <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--primary)', marginBottom: '6px' }}>
-                4. ÂM THANH
-              </div>
-              <button
-                onClick={onToggleMute}
-                className="btn-tactical"
-                style={{ padding: '5px 10px', fontSize: '11px', borderRadius: '6px' }}
-              >
-                {isMuted ? <VolumeX size={13} color="var(--danger)" /> : <Volume2 size={13} color="var(--success)" />}
-                <span>{isMuted ? "Đang tắt tiếng (Phím M)" : "Đang bật tiếng (Phím M)"}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Section 4: Cheat Sheet (MC ONLY) */}
+          {/* Section 3: Cheat Sheet (MC ONLY) */}
           <div style={{
             background: 'var(--bg-secondary)',
             border: '1px dashed var(--border-light)',
@@ -422,7 +427,7 @@ export default function MCPanel({
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: '11px', color: 'var(--primary)', fontWeight: 800 }}>
-                CHEAT SHEET ĐÁP ÁN (CHỈ DÀNH CHO MC):
+                CHEAT SHEET ĐÁP ÁN & VẬN MỆNH (CHỈ DÀNH CHO MC):
               </span>
               <button
                 onClick={() => setShowAnswerCheat(!showAnswerCheat)}
@@ -430,7 +435,7 @@ export default function MCPanel({
                 style={{ padding: '2px 8px', fontSize: '10px', borderRadius: '4px' }}
               >
                 <Eye size={11} />
-                <span>{showAnswerCheat ? "Ẩn đáp án" : "Xem đáp án"}</span>
+                <span>{showAnswerCheat ? "Ẩn danh sách" : "Xem trước"}</span>
               </button>
             </div>
 
@@ -439,29 +444,42 @@ export default function MCPanel({
                 marginTop: '8px',
                 display: 'grid',
                 gridTemplateColumns: 'repeat(3, 1fr)',
-                gap: '6px'
+                gap: '6px',
+                maxHeight: '180px',
+                overflowY: 'auto'
               }}>
-                {QUESTIONS.map((q) => (
-                  <div key={q.id} style={{
-                    background: 'var(--surface)',
-                    border: '1px solid var(--border)',
-                    borderRadius: '6px',
-                    padding: '4px 6px',
-                    fontSize: '10px'
-                  }}>
-                    <div style={{ color: 'var(--accent)', fontWeight: 800 }}>
-                      C{q.turnIndex} ({q.assignedTeamId ? `Đội ${q.assignedTeamId}` : 'Cả 4 đội'}): [{q.correctAnswer}]
+                {QUESTIONS.map((q) => {
+                  const fateInfo = q.fate ? FATE_TYPES[q.fate.type] : null;
+
+                  return (
+                    <div key={q.id} style={{
+                      background: 'var(--surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      padding: '4px 6px',
+                      fontSize: '10px'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--accent)', fontWeight: 800 }}>
+                          {q.isFinal ? 'FINAL' : `R${q.round}-C${q.cardNum}`} [{q.correctAnswer}]
+                        </span>
+                        {fateInfo && (
+                          <span style={{ color: fateInfo.color, fontWeight: 700 }}>
+                            {fateInfo.icon} {fateInfo.name}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ color: 'var(--text-secondary)', fontSize: '9px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {q.pillar}
+                      </div>
                     </div>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '9px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {q.pillar}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
 
-          {/* Section 5: Keyboard Shortcuts Reference */}
+          {/* Section 4: Keyboard Shortcuts Reference */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -473,9 +491,8 @@ export default function MCPanel({
             borderRadius: '6px'
           }}>
             <Keyboard size={13} style={{ color: 'var(--primary)' }} />
-            <span><strong>SPACE:</strong> Start/Pause Timer</span>
             <span><strong>M:</strong> Bật/Tắt Âm thanh</span>
-            <span><strong>ESC:</strong> Đóng MC Panel</span>
+            <span><strong>ESC:</strong> Đóng/Mở MC Panel</span>
           </div>
         </div>
       </div>
